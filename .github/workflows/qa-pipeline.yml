@@ -1,0 +1,67 @@
+name: QA TC 자동 생성 파이프라인
+
+# ── 트리거 ──────────────────────────────────────────────────────
+# main 브랜치에 push될 때마다 자동 실행
+# GitHub Actions 탭에서 수동 실행(workflow_dispatch)도 가능
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# 결과 CSV/리포트를 레포에 커밋·푸시하기 위해 write 권한 필요
+permissions:
+  contents: write
+
+jobs:
+  generate-tc:
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── 1. 레포 체크아웃 ───────────────────────────────────────
+      - name: 📥 레포 체크아웃
+        uses: actions/checkout@v4
+
+      # ── 2. Python 환경 세팅 ────────────────────────────────────
+      - name: 🐍 Python 3.11 세팅
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      # ── 3. 패키지 설치 ─────────────────────────────────────────
+      - name: 📦 의존성 설치 (requirements.txt)
+        run: pip install -r requirements.txt
+
+      # ── 4. TC 파이프라인 실행 ──────────────────────────────────
+      # ANTHROPIC_API_KEY는 GitHub 레포 Settings > Secrets > Actions에
+      # 'ANTHROPIC_API_KEY' 이름으로 등록해야 합니다.
+      - name: 🚀 TC 파이프라인 실행
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          TODAY=$(date +%Y%m%d)
+          echo "▶ 기획서: data/petbbi-spec-v2-with-ac.md"
+          echo "▶ 출력 CSV: output/petbbi-spec-v2-with-ac_tc_${TODAY}.csv"
+
+          python tc-pipeline.py data/petbbi-spec-v2-with-ac.md \
+            --output output/petbbi-spec-v2-with-ac_tc_${TODAY}.csv
+
+          # 커버리지 리포트(.txt)를 루트에서 output/ 폴더로 이동
+          mv petbbi-spec-v2-with-ac_coverage_*.txt output/ 2>/dev/null \
+            && echo "▶ 커버리지 리포트 → output/ 이동 완료" \
+            || echo "▶ 커버리지 리포트 파일 없음 (스킵)"
+
+      # ── 5. 생성된 파일 커밋 & 푸시 ────────────────────────────
+      # [skip ci] 태그로 이 커밋이 다시 워크플로우를 트리거하지 않도록 방지
+      - name: 📤 결과 파일 자동 커밋 & 푸시
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add output/
+          if git diff --staged --quiet; then
+            echo "변경된 파일 없음 — 커밋 스킵"
+          else
+            git commit -m "ci: auto-generate TC CSV and coverage report [skip ci]"
+            git push
+            echo "✓ output/ 결과 파일 push 완료"
+          fi
